@@ -1,0 +1,133 @@
+#@TODO 
+
+name: Build jenkins Image
+run-name: Build jenkins Image
+
+on:
+  push:
+    branches:
+      - 'main'
+      - 'test'
+
+env:
+  IMAGE_NAME: jenkins_master
+  REGISTRY: docker.io
+  ORGANIZATION: webdronesas
+
+jobs:
+  build:
+    runs-on: self-hosted
+    permissions:
+      contents: write
+      packages: write
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      ## use for incremental version
+      - name: Get next version
+        uses: reecetech/version-increment@2023.3.1
+        id: version
+        with:
+          scheme: semver
+          increment: patch
+
+      - name: Extract metadata (tags, labels) for Docker
+        if: github.event_name != 'pull_request'
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+      # getting secrets
+      - name: getting secrets
+        uses: scaleway/action-scw-secret@v0
+        with:
+          secret-names: |
+            /DOCKER/DOCKER_USER
+            /DOCKER/DOCKER_TOKEN
+            /TEAMS/MS_TEAMS_WEBHOOK_URI
+          access-key: ${{ secrets.SCW_ACCESS_KEY }}
+          secret-key: ${{ secrets.SCW_SECRET_KEY }}
+          default-project-id: ${{ secrets.SCW_DEFAULT_PROJECT_ID }}
+          default-organization-id: ${{ secrets.SCW_DEFAULT_ORGANIZATION_ID }}
+
+      # logging in to dockerhub except on PR
+      - name: Login to dockerhub registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ env.DOCKER_USER }}
+          password: ${{ env.DOCKER_TOKEN }}
+          logout: true
+
+      # not mandatory but better for advanced config (that's why we keep it in the workflow)
+      #- name: Set up Docker Buildx
+      #  uses: docker/setup-buildx-action@v3
+
+      # build and push image if "push" with incremental version
+      - name: Build and push image to private docker registry (push trigger)
+        if: github.event_name == 'push'
+        uses: docker/build-push-action@v4
+        with:
+          no-cache: true
+          context: "."
+          file: ./Dockerfile
+          push: true
+          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ env.REGISTRY }}/${{ env.ORGANIZATION }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }},${{ env.REGISTRY }}/${{ env.ORGANIZATION }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Increment current tag version
+        if: success()
+        uses: actions/github-script@v5
+        with:
+          script: |
+            github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'refs/tags/${{ steps.version.outputs.version }}',
+              sha: context.sha
+            })
+
+      - name: Failure Teams notification
+        if: failure()
+        id: TeamsFail
+        uses: toko-bifrost/ms-teams-deploy-card@master
+        with:
+          github-token: ${{ github.token }}
+          webhook-uri: ${{ env.MS_TEAMS_WEBHOOK_URI }}
+          show-on-start: false
+          card-layout-exit: complete
+          timezone: "Europe/Paris"
+
+  notify:
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: getting secrets
+        uses: scaleway/action-scw-secret@v0
+        with:
+          secret-names: |
+            /TEAMS/MS_TEAMS_WEBHOOK_URI
+          access-key: ${{ secrets.SCW_ACCESS_KEY }}
+          secret-key: ${{ secrets.SCW_SECRET_KEY }}
+          default-project-id: ${{ secrets.SCW_DEFAULT_PROJECT_ID }}
+          default-organization-id: ${{ secrets.SCW_DEFAULT_ORGANIZATION_ID }}
+
+      - name: Success Teams notification
+        # if: ${{ always() && contains(needs.*.result, 'failure') }}
+        id: TeamsSuccess
+        uses: toko-bifrost/ms-teams-deploy-card@master
+        with:
+          github-token: ${{ github.token }}
+          webhook-uri: ${{ env.MS_TEAMS_WEBHOOK_URI }}
+          show-on-start: false
+          card-layout-exit: cozy
+          timezone: "Europe/Paris"
+

@@ -1,0 +1,12 @@
+[
+    {
+      "name": "Jenkins"
+    },
+    {
+      "name": "gitlab ci",
+      "prerequisites": ["Jenkins"]
+    },
+    {
+      "name": "argocd"
+    }
+]

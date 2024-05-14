@@ -1,0 +1,12 @@
+[
+  {
+    "name": "test1"
+  },
+  {
+    "name": "test2",
+    "prerequisites": ["test1"]
+  },
+  {
+    "name": "test3"
+  }
+]
